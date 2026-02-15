@@ -1,7 +1,6 @@
 import os
 import time
-from datetime import datetime, timezone
-from typing import Tuple
+from typing import Tuple, Optional
 
 from dotenv import load_dotenv
 from supabase import create_client
@@ -18,6 +17,7 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
 HF_MODEL = os.getenv("HF_MODEL", "emngarcia/deberta_mh_benign_worrisome")
+HF_MODEL_2 = os.getenv("HF_MODEL_2", "emngarcia/deberta_mh_benign_worrisome")  # replace with your second model
 MODEL_VERSION = os.getenv("MODEL_VERSION", "hackathon-v1")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "50"))
 SLEEP_SECONDS = float(os.getenv("SLEEP_SECONDS", "1.0"))
@@ -30,21 +30,29 @@ MIN_WORDS = int(os.getenv("MIN_WORDS", "5"))
 sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 # -----------------------
-# Load model (once)
+# Load both models (once)
 # -----------------------
-print(f"Loading model {HF_MODEL}...")
-tokenizer = AutoTokenizer.from_pretrained(HF_MODEL, use_fast=False)
-model = AutoModelForSequenceClassification.from_pretrained(HF_MODEL)
-model.eval()
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-model.to(device)
-print(f"Model loaded on {device}")
+
+print(f"Loading model 1: {HF_MODEL}...")
+tokenizer1 = AutoTokenizer.from_pretrained(HF_MODEL, use_fast=False)
+model1 = AutoModelForSequenceClassification.from_pretrained(HF_MODEL)
+model1.eval()
+model1.to(device)
+
+print(f"Loading model 2: {HF_MODEL_2}...")
+tokenizer2 = AutoTokenizer.from_pretrained(HF_MODEL_2, use_fast=False)
+model2 = AutoModelForSequenceClassification.from_pretrained(HF_MODEL_2)
+model2.eval()
+model2.to(device)
+
+print(f"Both models loaded on {device}")
 
 
 # -----------------------
 # Inference
 # -----------------------
-def infer_one(text: str) -> Tuple[float, str]:
+def infer_one(text: str, tokenizer, model) -> Tuple[float, str]:
     enc = tokenizer(
         [text],
         truncation=True,
@@ -65,7 +73,6 @@ def infer_one(text: str) -> Tuple[float, str]:
 # DB helpers
 # -----------------------
 def claim_events(batch_size: int):
-    """Atomically claim a batch of queued events and mark them processing."""
     res = sb.rpc("claim_keyboard_events", {"batch_size": batch_size}).execute()
     return res.data or []
 
@@ -107,8 +114,16 @@ def main() -> None:
 
             # Run inference
             try:
-                score, label = infer_one(text)
+                score, label = infer_one(text, tokenizer1, model1)
                 print(f"  {event_id}: label={label} score={score:.3f} text='{text[:60]}'")
+
+                # Initialize second model results as None before the check
+                label2: Optional[str] = None
+                score2: Optional[float] = None
+
+                if label.lower() == "worrisome":
+                    score2, label2 = infer_one(text, tokenizer2, model2)
+                    print(f"  {event_id} (model2): label={label2} score={score2:.3f}")
 
                 # Write to predictions
                 sb.table("predictions").insert({
@@ -117,9 +132,11 @@ def main() -> None:
                     "score": score,
                     "model_version": MODEL_VERSION,
                     "input_text": text,
+                    "label2": label2,
+                    "score2": score2,
+                    "model_version2": HF_MODEL_2 if label2 is not None else None,
                 }).execute()
 
-                # Mark event done
                 sb.table("keyboard_events") \
                     .update({"status": "done"}) \
                     .eq("id", event_id) \
@@ -137,3 +154,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
