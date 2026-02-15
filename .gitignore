@@ -16,8 +16,11 @@ Pods/
 # Carthage (if used)
 Carthage/Build/
 
-# Ignore large dataset
-data_preprocessing/data/Original Reddit Data/merged_all_data.csv
+# Large datasets
+data-preprocessing/data/Original Reddit Data/raw data/merged_all_data.csv
+data-preprocessing/data/Original Reddit Data/raw data/merged_all_data.csv.zip
+data-preprocessing/data/cleaned/merged_good_bad.csv
+
 
 # Python venv
 venv/
