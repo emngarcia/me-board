@@ -27,3 +27,6 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+
+# Large datasets
+"data-preprocessing/datasets/Original Reddit Data/raw data/merged_all_data.csv"
