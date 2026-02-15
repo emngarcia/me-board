@@ -30,3 +30,5 @@ __pycache__/
 
 # Large datasets
 "data-preprocessing/datasets/Original Reddit Data/raw data/merged_all_data.csv"
+.env
+**/.env
