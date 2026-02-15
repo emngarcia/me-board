@@ -10,10 +10,14 @@ struct Prediction: Codable, Identifiable {
     let label: String
     let score: Double
     let modelVersion: String
+    let label2: String?
+    let score2: Double?
+    let modelVersion2: String?
 
     var id: UUID { eventId }
 
     var isWorrisome: Bool { label == "worrisome" }
+    var isSuicidal: Bool { label2 == "Suicidal" }
     var confidencePercent: Double { score * 100 }
 
     enum CodingKeys: String, CodingKey {
@@ -22,6 +26,9 @@ struct Prediction: Codable, Identifiable {
         case label
         case score
         case modelVersion = "model_version"
+        case label2
+        case score2
+        case modelVersion2 = "model_version2"
     }
 }
 
@@ -293,6 +300,30 @@ class MentalHealthViewModel: ObservableObject {
         todayEventCount >= 1 && todayWorrisomeRate > 0.5
     }
 
+    // MARK: - Crisis Detection (Suicidal label)
+
+    private var todayPredictions: [Prediction] {
+        predictions.filter { Calendar.current.isDateInToday($0.createdAt) }
+    }
+
+    private var todayClassifiedCount: Int {
+        todayPredictions.filter { $0.label2 != nil }.count
+    }
+
+    private var todaySuicidalCount: Int {
+        todayPredictions.filter(\.isSuicidal).count
+    }
+
+    private var todaySuicidalRate: Double {
+        guard todayClassifiedCount > 0 else { return 0 }
+        return Double(todaySuicidalCount) / Double(todayClassifiedCount)
+    }
+
+    /// True when 10+ classified posts today AND more than 25% tagged suicidal
+    var showCrisisAlert: Bool {
+        todayClassifiedCount >= 10 && todaySuicidalRate > 0.25
+    }
+
     // MARK: - This Week Summary (for recap card)
 
     var thisWeekSummary: WeekSummary {
@@ -318,6 +349,17 @@ class MentalHealthViewModel: ObservableObject {
     // MARK: - Empathetic Message
 
     var empatheticMessage: EmpatheticMessage {
+        // HIGHEST PRIORITY: Crisis alert
+        if showCrisisAlert {
+            return EmpatheticMessage(
+                icon: "heart.fill",
+                title: "We're here for you",
+                body: "We've noticed some signs that you might be going through something really difficult right now. You don't have to face this alone — please consider reaching out to someone you trust, or contact a crisis helpline.",
+                suggestion: "988 Suicide & Crisis Lifeline: call or text 988, available 24/7.",
+                tone: .crisis
+            )
+        }
+
         // Use personalized message from Claude if available
         if isPersonalized,
            let title = personalizedTitle,
@@ -607,7 +649,7 @@ struct EmpatheticMessage {
     let tone: Tone
 
     enum Tone {
-        case supportive, encouraging, neutral
+        case supportive, encouraging, neutral, crisis
     }
 }
 
@@ -664,9 +706,10 @@ struct MentalHealthDashboardView: View {
     @State private var todayMood: MoodLevel? = nil
     @State private var reflectionRange: ReflectionRange = .daily
 
-    /// True when the top empathetic card is already showing journal/breathe buttons
+    /// True when the top empathetic card is already showing action buttons
     private var topCardShowsActions: Bool {
-        viewModel.empatheticMessage.tone == .supportive
+        let tone = viewModel.empatheticMessage.tone
+        return tone == .supportive || tone == .crisis
     }
 
     var body: some View {
@@ -720,7 +763,6 @@ struct MentalHealthDashboardView: View {
     private var empatheticCard: some View {
         Group {
             if viewModel.isLoadingPersonalized && !viewModel.isPersonalized {
-                // Placeholder only on first load before any content exists
                 empatheticCardPlaceholder
             } else {
                 empatheticCardContent
@@ -759,6 +801,7 @@ struct MentalHealthDashboardView: View {
             case .supportive: return Color.orange.opacity(0.08)
             case .encouraging: return Color.earthAccent.opacity(0.1)
             case .neutral: return Color.earthCard
+            case .crisis: return Color.red.opacity(0.08)
             }
         }()
         let accentColor: Color = {
@@ -766,6 +809,7 @@ struct MentalHealthDashboardView: View {
             case .supportive: return .orange
             case .encouraging: return .earthAccent
             case .neutral: return .earthSage
+            case .crisis: return .red
             }
         }()
 
@@ -787,12 +831,26 @@ struct MentalHealthDashboardView: View {
             if let suggestion = msg.suggestion {
                 Text(suggestion)
                     .font(.subheadline.italic())
-                    .foregroundStyle(Color.earthSage)
+                    .foregroundStyle(msg.tone == .crisis ? Color.red.opacity(0.8) : Color.earthSage)
                     .padding(.top, 2)
             }
 
             HStack(spacing: 12) {
-                if msg.tone == .supportive {
+                if msg.tone == .crisis {
+                    Button {
+                        if let url = URL(string: "tel:988") {
+                            UIApplication.shared.open(url)
+                        }
+                    } label: {
+                        Label("Call 988", systemImage: "phone.fill")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(Color.red)
+                            .clipShape(Capsule())
+                    }
+                } else if msg.tone == .supportive {
                     Button {
                         showingNewEntry = true
                     } label: {
@@ -1146,7 +1204,6 @@ struct MentalHealthDashboardView: View {
                 Spacer()
             }
 
-            // Segmented picker
             Picker("Range", selection: $reflectionRange) {
                 ForEach(ReflectionRange.allCases, id: \.self) { range in
                     Text(range.rawValue).tag(range)
@@ -1309,7 +1366,6 @@ struct MentalHealthDashboardView: View {
                 .foregroundStyle(Color.earthStone)
                 .padding(.leading, 38)
 
-            // Stats row for weeks
             HStack(spacing: 16) {
                 miniStat(value: "\(week.daysActive)", label: "days active")
                 miniStat(value: "\(week.benignCount)", label: "ups")
@@ -1387,7 +1443,6 @@ struct MentalHealthDashboardView: View {
                 .foregroundStyle(Color.earthStone)
                 .padding(.leading, 38)
 
-            // Consistency + stats
             Text(month.consistencyMessage)
                 .font(.caption)
                 .foregroundStyle(Color.earthSage)
