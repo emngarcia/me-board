@@ -1,2 +1,9 @@
 flask
 pandas 
+supabase 
+requests
+
+transformers 
+torch 
+sentencepiece 
+python-dotenv
